@@ -23,7 +23,7 @@ Signed-off-by: John Crispin <john@phrozen.org>
  obj-$(CONFIG_ARCH_BCM2835)		+= irq-bcm2836.o
 --- /dev/null
 +++ b/drivers/irqchip/irq-ath79-intc.c
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,124 @@
 +/*
 + *  Atheros AR71xx/AR724x/AR913x specific interrupt handling
 + *
@@ -48,9 +48,12 @@ Signed-off-by: John Crispin <john@phrozen.org>
 +
 +struct ath79_intc {
 +	struct irq_chip chip;
++	u8 if_ddr_wb_flush;
 +	u32 irq;
 +	u32 pending_mask;
++	u32 int_status;
 +	u32 irq_mask[ATH79_MAX_INTC_CASCADE];
++	u32 ddr_wb_channel[ATH79_MAX_INTC_CASCADE];
 +};
 +
 +static void ath79_intc_irq_handler(struct irq_desc *desc)
@@ -59,26 +62,33 @@ Signed-off-by: John Crispin <john@phrozen.org>
 +	struct ath79_intc *intc = domain->host_data;
 +	u32 pending;
 +
-+	pending = ath79_reset_rr(QCA955X_RESET_REG_EXT_INT_STATUS);
++	pending = ath79_reset_rr(intc->int_status);
 +	pending &= intc->pending_mask;
 +
 +	if (pending) {
 +		int i;
 +
 +		for (i = 0; i < domain->hwirq_max; i++)
-+			if (pending & intc->irq_mask[i])
++			if (pending & intc->irq_mask[i]) {
++				if (intc->if_ddr_wb_flush)
++					ath79_ddr_wb_flush(intc->ddr_wb_channel[i]);
 +				generic_handle_irq(irq_find_mapping(domain, i));
++			}
 +	} else {
 +		spurious_interrupt();
 +	}
 +}
 +
-+static void ath79_intc_irq_unmask(struct irq_data *d)
++static void ath79_intc_irq_enable(struct irq_data *d)
 +{
++	struct ath79_intc *intc = d->domain->host_data;
++	enable_irq(intc->irq);
 +}
 +
-+static void ath79_intc_irq_mask(struct irq_data *d)
++static void ath79_intc_irq_disable(struct irq_data *d)
 +{
++	struct ath79_intc *intc = d->domain->host_data;
++	disable_irq(intc->irq);
 +}
 +
 +static int ath79_intc_map(struct irq_domain *d, unsigned int irq, irq_hw_number_t hw)
@@ -95,7 +105,7 @@ Signed-off-by: John Crispin <john@phrozen.org>
 +	.map = ath79_intc_map,
 +};
 +
-+static int __init qca9556_intc_of_init(
++static int __init ath79_intc_of_init(
 +	struct device_node *node, struct device_node *parent)
 +{
 +	struct irq_domain *domain;
@@ -109,13 +119,23 @@ Signed-off-by: John Crispin <john@phrozen.org>
 +	intc = kzalloc(sizeof(*intc), GFP_KERNEL);
 +	if (!intc)
 +		panic("Failed to allocate INTC memory\n");
++	intc->chip = dummy_irq_chip;
 +	intc->chip.name = "INTC";
-+	intc->chip.irq_unmask = ath79_intc_irq_unmask,
-+	intc->chip.irq_mask = ath79_intc_irq_mask,
++	intc->chip.irq_disable = ath79_intc_irq_disable;
++	intc->chip.irq_enable = ath79_intc_irq_enable;
++
++	if (of_property_read_u32(node, "qcom,int-status-addr", &intc->int_status) < 0) {
++		panic("Missing address of interrupt status register\n");
++	}
 +
 +	of_property_read_u32_array(node, "qcom,pending-bits", intc->irq_mask, cnt);
 +	for (i = 0; i < cnt; i++)
 +		intc->pending_mask |= intc->irq_mask[i];
++
++	if (cnt == of_property_count_u32_elems(node, "qcom,ddr-wb-channel")) {
++		intc->if_ddr_wb_flush = 1;
++		of_property_read_u32_array(node, "qcom,ddr-wb-flush", intc->ddr_wb_channel, cnt);
++	}
 +
 +	intc->irq = irq_of_parse_and_map(node, 0);
 +	if (!intc->irq)
@@ -126,5 +146,5 @@ Signed-off-by: John Crispin <john@phrozen.org>
 +
 +	return 0;
 +}
-+IRQCHIP_DECLARE(qca9556_intc, "qcom,qca9556-intc",
-+		qca9556_intc_of_init);
++IRQCHIP_DECLARE(ath79_intc, "qcom,ath79-intc",
++		ath79_intc_of_init);
