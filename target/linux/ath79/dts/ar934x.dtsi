@@ -132,11 +132,36 @@
 				reg = <0x1806001c 0x4>;
 
 				#reset-cells = <1>;
+
+				intc2: interrupt-controller@2 {
+					compatible = "qcom,ath79-intc";
+
+					interrupt-parent = <&cpuintc>;
+					interrupts = <2>;
+
+					interrupt-controller;
+					#interrupt-cells = <1>;
+
+					qcom,int-status-addr = <0xac>;
+					qcom,pending-bits = <0x1f0>,	/* pcie rc1 */
+							    <0xf>;	/* wmac */
+					qcom,ddr-wb-channel = <3>, <4>;
+				};
 			};
 
 			gmac: gmac@18070000 {
 				compatible = "qca,ar9340-gmac", "qca,ar9330-gmac";
 				reg = <0x18070000 0x14>;
+			};
+
+			wmac: wmac@18100000 {
+				compatible = "qca,ar9340-wmac", "qca,ar9100-wmac";
+				reg = <0x18100000 0x20000>;
+
+				interrupt-parent = <&intc2>;
+				interrupts = <1>;
+
+				status = "disabled";
 			};
 		};
 
